@@ -6,17 +6,21 @@ export function registerAuthCommand(program: Command): void {
 
   auth
     .command('set')
-    .description('Set credentials and optional config')
-    .requiredOption('-c, --cookie <cookie>', 'Full Cookie header value from browser')
-    .requiredOption('-t, --csrf <token>', 'CSRF token (csrftoken cookie value)')
+    .description('Update one or more config values (only provided options are changed)')
+    .option('-c, --cookie <cookie>', 'Full Cookie header value from browser')
+    .option('-t, --csrf <token>', 'CSRF token (csrftoken cookie value)')
     .option('-g, --gemini-key <key>', 'Google Gemini API key (for problem analysis)')
     .option('-p, --proxy <url>', 'HTTP/HTTPS proxy for AI requests (e.g. http://127.0.0.1:7890)')
-    .action((opts: { cookie: string; csrf: string; geminiKey?: string; proxy?: string }) => {
-      setCookie(opts.cookie);
-      setCsrfToken(opts.csrf);
+    .action((opts: { cookie?: string; csrf?: string; geminiKey?: string; proxy?: string }) => {
+      if (!opts.cookie && !opts.csrf && !opts.geminiKey && !opts.proxy) {
+        console.log('⚠️  No options provided. Usage: leetcode-cli auth set [-c cookie] [-t csrf] [-g gemini-key] [-p proxy]');
+        return;
+      }
+      if (opts.cookie) setCookie(opts.cookie);
+      if (opts.csrf) setCsrfToken(opts.csrf);
       if (opts.geminiKey) setGeminiApiKey(opts.geminiKey);
       if (opts.proxy) setProxy(opts.proxy);
-      console.log('✅ Auth credentials saved to', getConfigPath());
+      console.log('✅ Config updated:', getConfigPath());
     });
 
   auth

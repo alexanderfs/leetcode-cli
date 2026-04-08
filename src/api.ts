@@ -299,14 +299,17 @@ function deriveStatus(submissions: RawSubmissionItem[]): ProblemStatus {
 export async function getProblemSummary(
   problemUrl: string,
   analysisFn?: (title: string, difficulty: string, description: string, code: string, lang: string) => Promise<string>,
+  onProgress?: (msg: string) => void,
 ): Promise<ProblemSummary> {
   const titleSlug = slugFromUrl(problemUrl);
 
   // Fetch problem detail and submissions in parallel
+  onProgress?.('⏳ Fetching problem details and submissions...');
   const [problem, submissions] = await Promise.all([
     getProblemDetail(titleSlug),
     listSubmissions(titleSlug, 10),
   ]);
+  onProgress?.(`✅ Problem fetched: ${problem.title} (${problem.difficulty})`);
 
   const status = deriveStatus(submissions);
   const description = stripHtml(problem.content ?? '');
@@ -319,6 +322,7 @@ export async function getProblemSummary(
   // Get latest accepted submission code (or latest if none accepted)
   const latestAccepted = submissions.find((s) => s.statusDisplay === 'Accepted') ?? submissions[0];
   if (latestAccepted) {
+    onProgress?.('⏳ Fetching latest submission code...');
     const detailQuery = `
       query submissionDetail($id: ID!) {
         submissionDetail(submissionId: $id) { code }
@@ -335,9 +339,12 @@ export async function getProblemSummary(
       memory: latestAccepted.memory,
       timestamp: new Date(parseInt(latestAccepted.timestamp, 10) * 1000).toISOString(),
     };
+    onProgress?.(`✅ Code fetched (${latestAccepted.lang}, ${latestAccepted.runtime}, ${latestAccepted.memory})`);
 
     if (analysisFn && code) {
+      onProgress?.('⏳ Analyzing code with AI...');
       analysis = await analysisFn(problem.title, problem.difficulty, description, code, latestAccepted.lang);
+      onProgress?.('✅ AI analysis complete');
     }
   }
 

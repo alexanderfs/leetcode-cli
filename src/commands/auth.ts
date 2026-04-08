@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { setCookie, setCsrfToken, setGeminiApiKey, setProxy, getCookie, getCsrfToken, getGeminiApiKey, getProxy, getConfigPath, clearConfig } from '../config';
+import { setCookie, setCsrfToken, setProxy, getCookie, getCsrfToken, getProxy, getConfigPath, clearConfig } from '../config';
 
 export function registerAuthCommand(program: Command): void {
   const auth = program.command('auth').description('Manage LeetCode authentication');
@@ -9,16 +9,14 @@ export function registerAuthCommand(program: Command): void {
     .description('Update one or more config values (only provided options are changed)')
     .option('-c, --cookie <cookie>', 'Full Cookie header value from browser')
     .option('-t, --csrf <token>', 'CSRF token (csrftoken cookie value)')
-    .option('-g, --gemini-key <key>', 'Google Gemini API key (for problem analysis)')
-    .option('-p, --proxy <url>', 'HTTP/HTTPS proxy for AI requests (e.g. http://127.0.0.1:7890)')
-    .action((opts: { cookie?: string; csrf?: string; geminiKey?: string; proxy?: string }) => {
-      if (!opts.cookie && !opts.csrf && !opts.geminiKey && !opts.proxy) {
-        console.log('⚠️  No options provided. Usage: leetcode-cli auth set [-c cookie] [-t csrf] [-g gemini-key] [-p proxy]');
+    .option('-p, --proxy <url>', 'HTTP/HTTPS proxy (e.g. http://127.0.0.1:7890)')
+    .action((opts: { cookie?: string; csrf?: string; proxy?: string }) => {
+      if (!opts.cookie && !opts.csrf && !opts.proxy) {
+        console.log('⚠️  No options provided. Usage: leetcode-cli auth set [-c cookie] [-t csrf] [-p proxy]');
         return;
       }
       if (opts.cookie) setCookie(opts.cookie);
       if (opts.csrf) setCsrfToken(opts.csrf);
-      if (opts.geminiKey) setGeminiApiKey(opts.geminiKey);
       if (opts.proxy) setProxy(opts.proxy);
       console.log('✅ Config updated:', getConfigPath());
     });
@@ -32,14 +30,12 @@ export function registerAuthCommand(program: Command): void {
         console.log('⚠️  No credentials set. Run: leetcode-cli auth set -c <cookie> -t <csrf>');
         return;
       }
-      const geminiKey = getGeminiApiKey();
-      const proxy = getProxy();
       console.log(JSON.stringify({
         configPath: getConfigPath(),
         cookiePreview: cookie.slice(0, 40) + '...',
         csrfToken: getCsrfToken(),
-        geminiApiKey: geminiKey ? geminiKey.slice(0, 8) + '...' : '(not set)',
-        proxy: proxy || '(not set)',
+        proxy: getProxy() || '(not set)',
+        aiProvider: 'GitHub Models (gpt-4o-mini) — uses `gh auth token` automatically',
       }, null, 2));
     });
 

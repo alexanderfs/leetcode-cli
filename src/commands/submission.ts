@@ -37,8 +37,8 @@ export function registerUserCommand(program: Command): void {
   const user = program.command('user').description('Fetch user profile');
 
   user
-    .command('profile <username>')
-    .description('Get public profile and solve stats for a user')
+    .command('profile <userSlug>')
+    .description('Get profile and solve stats by userSlug (shown in leetcode.cn profile URL)')
     .action(async (username: string) => {
       try {
         const profile = await getUserProfile(username);

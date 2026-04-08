@@ -113,51 +113,57 @@ export async function getRecentSubmissions(limit = 20): Promise<SubmissionRecord
 }
 
 export interface UserProfile {
-  username: string;
+  userSlug: string;
   realName: string;
-  ranking: number;
   totalSolved: number;
   easySolved: number;
   mediumSolved: number;
   hardSolved: number;
+  totalSubmissions: number;
+  easySubmissions: number;
+  mediumSubmissions: number;
+  hardSubmissions: number;
 }
 
-export async function getUserProfile(username: string): Promise<UserProfile> {
+export async function getUserProfile(userSlug: string): Promise<UserProfile> {
   const query = `
-    query userPublicProfile($username: String!) {
-      matchedUser(username: $username) {
-        username
-        profile { realName ranking }
-        submitStats {
-          acSubmissionNum {
-            difficulty
-            count
-          }
-        }
+    query userStats($userSlug: String!) {
+      userStatus { realName }
+      userProfileUserQuestionProgress(userSlug: $userSlug) {
+        numAcceptedQuestions { difficulty count }
+      }
+      userProfileUserQuestionSubmitStats(userSlug: $userSlug) {
+        acSubmissionNum { difficulty count }
       }
     }
   `;
-  const data = (await gql(query, { username })) as {
-    matchedUser: {
-      username: string;
-      profile: { realName: string; ranking: number };
-      submitStats: { acSubmissionNum: { difficulty: string; count: number }[] };
+  const data = (await gql(query, { userSlug })) as {
+    userStatus: { realName: string };
+    userProfileUserQuestionProgress: {
+      numAcceptedQuestions: { difficulty: string; count: number }[];
+    };
+    userProfileUserQuestionSubmitStats: {
+      acSubmissionNum: { difficulty: string; count: number }[];
     };
   };
 
-  const m = data.matchedUser;
-  const acMap = Object.fromEntries(
-    m.submitStats.acSubmissionNum.map((s) => [s.difficulty, s.count])
-  );
+  const toMap = (arr: { difficulty: string; count: number }[]) =>
+    Object.fromEntries(arr.map((s) => [s.difficulty.toLowerCase(), s.count]));
+
+  const solved = toMap(data.userProfileUserQuestionProgress.numAcceptedQuestions);
+  const submitted = toMap(data.userProfileUserQuestionSubmitStats.acSubmissionNum);
 
   return {
-    username: m.username,
-    realName: m.profile.realName,
-    ranking: m.profile.ranking,
-    totalSolved: acMap['All'] ?? 0,
-    easySolved: acMap['Easy'] ?? 0,
-    mediumSolved: acMap['Medium'] ?? 0,
-    hardSolved: acMap['Hard'] ?? 0,
+    userSlug,
+    realName: data.userStatus.realName,
+    totalSolved: (solved['easy'] ?? 0) + (solved['medium'] ?? 0) + (solved['hard'] ?? 0),
+    easySolved: solved['easy'] ?? 0,
+    mediumSolved: solved['medium'] ?? 0,
+    hardSolved: solved['hard'] ?? 0,
+    totalSubmissions: (submitted['easy'] ?? 0) + (submitted['medium'] ?? 0) + (submitted['hard'] ?? 0),
+    easySubmissions: submitted['easy'] ?? 0,
+    mediumSubmissions: submitted['medium'] ?? 0,
+    hardSubmissions: submitted['hard'] ?? 0,
   };
 }
 

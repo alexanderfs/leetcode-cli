@@ -1,7 +1,11 @@
-import { Client } from '@notionhq/client';
+import axios from 'axios';
 import type { BlockObjectRequest } from '@notionhq/client/build/src/api-endpoints';
-import { getNotionToken, getNotionDatabaseId } from './config';
+import { HttpsProxyAgent } from 'https-proxy-agent';
+import { getNotionToken, getNotionDatabaseId, getProxy } from './config';
 import type { ProblemSummary } from './api';
+
+const NOTION_API = 'https://api.notion.com/v1';
+const NOTION_VERSION = '2022-06-28';
 
 // Notion rich_text has a 2000-character limit per element
 function chunkText(text: string, size = 2000): string[] {
@@ -76,7 +80,18 @@ export async function pushToNotion(summary: ProblemSummary): Promise<string> {
   if (!token) throw new Error('Notion token not set. Run: leetcode-cli auth set -n <token>');
   if (!databaseId) throw new Error('Notion database ID not set. Run: leetcode-cli auth set -d <id>');
 
-  const notion = new Client({ auth: token });
+  const proxyUrl = getProxy();
+  const axiosConfig: Record<string, unknown> = {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'Notion-Version': NOTION_VERSION,
+    },
+  };
+  if (proxyUrl) {
+    axiosConfig['httpsAgent'] = new HttpsProxyAgent(proxyUrl);
+    axiosConfig['proxy'] = false;
+  }
 
   const blocks: BlockObjectRequest[] = [];
 
@@ -106,7 +121,7 @@ export async function pushToNotion(summary: ProblemSummary): Promise<string> {
   blocks.push(heading1('Analysis'));
   blocks.push(paragraph(summary.analysis || 'No analysis available.'));
 
-  const response = await notion.pages.create({
+  const payload = {
     parent: { database_id: databaseId },
     properties: {
       Problem: {
@@ -126,7 +141,8 @@ export async function pushToNotion(summary: ProblemSummary): Promise<string> {
       },
     },
     children: blocks,
-  });
+  };
 
-  return (response as { url?: string; id: string }).url ?? response.id;
+  const response = await axios.post(`${NOTION_API}/pages`, payload, axiosConfig);
+  return response.data?.url ?? response.data?.id ?? '(unknown)';
 }

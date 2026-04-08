@@ -20,8 +20,10 @@
   "type": "commonjs",
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "axios": "^1.14.0",
     "commander": "^14.0.3",
     "conf": "^15.1.0",
+    "https-proxy-agent": "^9.0.0",
     "node-html-parser": "^7.1.0",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.2"

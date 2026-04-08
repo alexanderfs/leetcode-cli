@@ -349,7 +349,7 @@ export async function getProblemSummary(
   }
 
   return {
-    problem: problem.title,
+    problem: `${problem.questionFrontendId}. ${problem.title}`,
     link: problemUrl,
     difficulty: problem.difficulty,
     tags: problem.topicTags.map((t) => t.name),

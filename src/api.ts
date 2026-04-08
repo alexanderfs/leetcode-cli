@@ -179,8 +179,16 @@ export interface ProblemSubmission {
   code: string;
 }
 
-export async function getLatestProblemSubmission(titleSlug: string, problemUrl: string): Promise<ProblemSubmission> {
-  // Step 1: list submissions for this problem, take the first (latest)
+interface RawSubmissionItem {
+  id: string;
+  statusDisplay: string;
+  lang: string;
+  runtime: string;
+  memory: string;
+  timestamp: string;
+}
+
+async function listSubmissions(titleSlug: string, limit = 10): Promise<RawSubmissionItem[]> {
   const listQuery = `
     query submissionList($offset: Int!, $limit: Int!, $questionSlug: String!) {
       submissionList(offset: $offset, limit: $limit, questionSlug: $questionSlug) {
@@ -195,26 +203,19 @@ export async function getLatestProblemSubmission(titleSlug: string, problemUrl: 
       }
     }
   `;
-  const listData = (await gql(listQuery, { offset: 0, limit: 1, questionSlug: titleSlug })) as {
-    submissionList: {
-      submissions: {
-        id: string;
-        statusDisplay: string;
-        lang: string;
-        runtime: string;
-        memory: string;
-        timestamp: string;
-      }[];
-    };
+  const listData = (await gql(listQuery, { offset: 0, limit, questionSlug: titleSlug })) as {
+    submissionList: { submissions: RawSubmissionItem[] };
   };
+  return listData.submissionList?.submissions ?? [];
+}
 
-  const submissions = listData.submissionList?.submissions;
-  if (!submissions || submissions.length === 0) {
+export async function getLatestProblemSubmission(titleSlug: string, problemUrl: string): Promise<ProblemSubmission> {
+  const submissions = await listSubmissions(titleSlug, 1);
+  if (submissions.length === 0) {
     throw new Error(`No submissions found for problem: ${titleSlug}`);
   }
   const latest = submissions[0]!;
 
-  // Step 2: fetch the submission detail to get the code
   const detailQuery = `
     query submissionDetail($id: ID!) {
       submissionDetail(submissionId: $id) {
@@ -236,5 +237,120 @@ export async function getLatestProblemSubmission(titleSlug: string, problemUrl: 
     memory: latest.memory,
     timestamp: new Date(parseInt(latest.timestamp, 10) * 1000).toISOString(),
     code: detailData.submissionDetail.code,
+  };
+}
+
+// ── Problem Summary (aggregated) ─────────────────────────────────────────────
+
+export type ProblemStatus = 'Solved' | 'Tried' | 'Unsolved';
+
+export interface ProblemSummary {
+  problem: string;
+  link: string;
+  difficulty: string;
+  tags: string[];
+  status: ProblemStatus;
+  description: string;
+  useCases: string[];
+  code: string | null;
+  submissionInfo: { id: string; lang: string; runtime: string; memory: string; timestamp: string } | null;
+  analysis: string;
+}
+
+/** Strip HTML tags and normalise whitespace */
+export function stripHtml(html: string): string {
+  return html
+    .replace(/<pre[^>]*>([\s\S]*?)<\/pre>/gi, '\n$1\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/** Extract example blocks from HTML content */
+export function extractUseCases(html: string): string[] {
+  const cases: string[] = [];
+  const preBlocks = html.match(/<pre>([\s\S]*?)<\/pre>/gi) ?? [];
+  for (const block of preBlocks) {
+    const text = stripHtml(block).trim();
+    if (text) cases.push(text);
+  }
+  // fallback: look for "Example N:" pattern in stripped text
+  if (cases.length === 0) {
+    const stripped = stripHtml(html);
+    const matches = stripped.match(/Example\s*\d+:[\s\S]*?(?=Example\s*\d+:|Constraints:|$)/gi) ?? [];
+    cases.push(...matches.map((m) => m.trim()));
+  }
+  return cases;
+}
+
+/** Derive Solved/Tried/Unsolved from a list of submissions */
+function deriveStatus(submissions: RawSubmissionItem[]): ProblemStatus {
+  if (submissions.length === 0) return 'Unsolved';
+  if (submissions.some((s) => s.statusDisplay === 'Accepted')) return 'Solved';
+  return 'Tried';
+}
+
+export async function getProblemSummary(
+  problemUrl: string,
+  analysisFn?: (title: string, difficulty: string, description: string, code: string, lang: string) => Promise<string>,
+): Promise<ProblemSummary> {
+  const titleSlug = slugFromUrl(problemUrl);
+
+  // Fetch problem detail and submissions in parallel
+  const [problem, submissions] = await Promise.all([
+    getProblemDetail(titleSlug),
+    listSubmissions(titleSlug, 10),
+  ]);
+
+  const status = deriveStatus(submissions);
+  const description = stripHtml(problem.content ?? '');
+  const useCases = extractUseCases(problem.content ?? '');
+
+  let code: string | null = null;
+  let submissionInfo: ProblemSummary['submissionInfo'] = null;
+  let analysis = '';
+
+  // Get latest accepted submission code (or latest if none accepted)
+  const latestAccepted = submissions.find((s) => s.statusDisplay === 'Accepted') ?? submissions[0];
+  if (latestAccepted) {
+    const detailQuery = `
+      query submissionDetail($id: ID!) {
+        submissionDetail(submissionId: $id) { code }
+      }
+    `;
+    const detailData = (await gql(detailQuery, { id: latestAccepted.id })) as {
+      submissionDetail: { code: string };
+    };
+    code = detailData.submissionDetail.code;
+    submissionInfo = {
+      id: latestAccepted.id,
+      lang: latestAccepted.lang,
+      runtime: latestAccepted.runtime,
+      memory: latestAccepted.memory,
+      timestamp: new Date(parseInt(latestAccepted.timestamp, 10) * 1000).toISOString(),
+    };
+
+    if (analysisFn && code) {
+      analysis = await analysisFn(problem.title, problem.difficulty, description, code, latestAccepted.lang);
+    }
+  }
+
+  return {
+    problem: problem.title,
+    link: problemUrl,
+    difficulty: problem.difficulty,
+    tags: problem.topicTags.map((t) => t.name),
+    status,
+    description,
+    useCases,
+    code,
+    submissionInfo,
+    analysis,
   };
 }

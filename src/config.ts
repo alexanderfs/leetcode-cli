@@ -1,11 +1,5 @@
 import Conf from 'conf';
-import path from 'path';
 import os from 'os';
-
-interface LeetCodeConfig {
-  cookie: string;
-  csrfToken: string;
-}
 
 const conf = new (Conf as any)({
   projectName: 'leetcode-cli',
@@ -14,29 +8,17 @@ const conf = new (Conf as any)({
   defaults: {
     cookie: '',
     csrfToken: '',
+    geminiApiKey: '',
   },
 });
 
-export function getCookie(): string {
-  return conf.get('cookie') as string;
-}
+export function getCookie(): string { return conf.get('cookie') as string; }
+export function getCsrfToken(): string { return conf.get('csrfToken') as string; }
+export function getGeminiApiKey(): string { return conf.get('geminiApiKey') as string; }
 
-export function getCsrfToken(): string {
-  return conf.get('csrfToken') as string;
-}
+export function setCookie(cookie: string): void { conf.set('cookie', cookie); }
+export function setCsrfToken(token: string): void { conf.set('csrfToken', token); }
+export function setGeminiApiKey(key: string): void { conf.set('geminiApiKey', key); }
 
-export function setCookie(cookie: string): void {
-  conf.set('cookie', cookie);
-}
-
-export function setCsrfToken(token: string): void {
-  conf.set('csrfToken', token);
-}
-
-export function getConfigPath(): string {
-  return conf.path as string;
-}
-
-export function clearConfig(): void {
-  conf.clear();
-}
+export function getConfigPath(): string { return conf.path as string; }
+export function clearConfig(): void { conf.clear(); }

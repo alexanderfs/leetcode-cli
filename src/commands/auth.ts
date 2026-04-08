@@ -1,17 +1,19 @@
 import { Command } from 'commander';
-import { setCookie, setCsrfToken, getCookie, getCsrfToken, getConfigPath, clearConfig } from '../config';
+import { setCookie, setCsrfToken, setGeminiApiKey, getCookie, getCsrfToken, getGeminiApiKey, getConfigPath, clearConfig } from '../config';
 
 export function registerAuthCommand(program: Command): void {
   const auth = program.command('auth').description('Manage LeetCode authentication');
 
   auth
     .command('set')
-    .description('Set your LeetCode cookie and CSRF token')
+    .description('Set your LeetCode cookie, CSRF token, and optional Gemini API key')
     .requiredOption('-c, --cookie <cookie>', 'Full Cookie header value from browser')
     .requiredOption('-t, --csrf <token>', 'CSRF token (csrftoken cookie value)')
-    .action((opts: { cookie: string; csrf: string }) => {
+    .option('-g, --gemini-key <key>', 'Google Gemini API key (for problem analysis)')
+    .action((opts: { cookie: string; csrf: string; geminiKey?: string }) => {
       setCookie(opts.cookie);
       setCsrfToken(opts.csrf);
+      if (opts.geminiKey) setGeminiApiKey(opts.geminiKey);
       console.log('✅ Auth credentials saved to', getConfigPath());
     });
 
@@ -20,15 +22,16 @@ export function registerAuthCommand(program: Command): void {
     .description('Show current auth config')
     .action(() => {
       const cookie = getCookie();
-      const csrf = getCsrfToken();
       if (!cookie) {
         console.log('⚠️  No credentials set. Run: leetcode-cli auth set -c <cookie> -t <csrf>');
         return;
       }
+      const geminiKey = getGeminiApiKey();
       console.log(JSON.stringify({
         configPath: getConfigPath(),
         cookiePreview: cookie.slice(0, 40) + '...',
-        csrfToken: csrf,
+        csrfToken: getCsrfToken(),
+        geminiApiKey: geminiKey ? geminiKey.slice(0, 8) + '...' : '(not set)',
       }, null, 2));
     });
 

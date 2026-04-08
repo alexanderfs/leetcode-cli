@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { registerAuthCommand } from './commands/auth';
 import { registerProblemCommand } from './commands/problem';
 import { registerSubmissionCommand, registerUserCommand } from './commands/submission';
+import { registerSummaryCommand } from './commands/summary';
 
 const program = new Command();
 
@@ -15,5 +16,6 @@ registerAuthCommand(program);
 registerProblemCommand(program);
 registerSubmissionCommand(program);
 registerUserCommand(program);
+registerSummaryCommand(program);
 
 program.parse(process.argv);

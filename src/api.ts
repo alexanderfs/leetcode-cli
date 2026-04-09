@@ -251,6 +251,7 @@ export interface ProblemSummary {
   tags: string[];
   status: ProblemStatus;
   description: string;
+  contentHtml: string;
   useCases: string[];
   code: string | null;
   submissionInfo: { id: string; lang: string; runtime: string; memory: string; timestamp: string } | null;
@@ -355,6 +356,7 @@ export async function getProblemSummary(
     tags: problem.topicTags.map((t) => t.name),
     status,
     description,
+    contentHtml: problem.content ?? '',
     useCases,
     code,
     submissionInfo,

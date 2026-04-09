@@ -1,6 +1,7 @@
 import axios from 'axios';
 import type { BlockObjectRequest } from '@notionhq/client/build/src/api-endpoints';
 import { HttpsProxyAgent } from 'https-proxy-agent';
+import { parse } from 'node-html-parser';
 import { getNotionToken, getNotionDatabaseId, getProxy } from './config';
 import type { ProblemSummary } from './api';
 
@@ -73,6 +74,237 @@ function codeBlocks(code: string, lang: string): BlockObjectRequest[] {
   } as BlockObjectRequest));
 }
 
+// ── HTML → Notion blocks ─────────────────────────────────────────────────────
+
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'");
+}
+
+type Annotations = {
+  bold?: boolean;
+  italic?: boolean;
+  code?: boolean;
+  strikethrough?: boolean;
+  underline?: boolean;
+};
+
+type RichTextItem = {
+  type: 'text';
+  text: { content: string; link?: { url: string } };
+  annotations?: Annotations;
+};
+
+function makeRichTextItems(
+  raw: string,
+  ann: Annotations,
+  href?: string,
+): RichTextItem[] {
+  const content = decodeEntities(raw);
+  return chunkText(content).map((chunk) => {
+    const item: RichTextItem = { type: 'text', text: { content: chunk } };
+    if (href) item.text.link = { url: href };
+    const filteredAnn: Annotations = {};
+    if (ann.bold) filteredAnn.bold = true;
+    if (ann.italic) filteredAnn.italic = true;
+    if (ann.code) filteredAnn.code = true;
+    if (ann.strikethrough) filteredAnn.strikethrough = true;
+    if (ann.underline) filteredAnn.underline = true;
+    if (Object.keys(filteredAnn).length > 0) item.annotations = filteredAnn;
+    return item;
+  });
+}
+
+/** Recursively extract inline rich-text segments from a node subtree. */
+function extractRichText(node: any, ann: Annotations = {}, href?: string): RichTextItem[] {
+  const results: RichTextItem[] = [];
+
+  if (node.nodeType === 3) {
+    // Text node – rawText preserves entity strings so we decode manually
+    const raw: string = node.rawText ?? '';
+    if (decodeEntities(raw).trim()) {
+      results.push(...makeRichTextItems(raw, ann, href));
+    }
+    return results;
+  }
+
+  if (node.nodeType !== 1) return results;
+
+  const tag: string = (node.tagName ?? '').toLowerCase();
+  const childAnn: Annotations = { ...ann };
+  let childHref = href;
+
+  switch (tag) {
+    case 'strong': case 'b': childAnn.bold = true; break;
+    case 'em': case 'i': childAnn.italic = true; break;
+    case 'code': childAnn.code = true; break;
+    case 's': case 'del': case 'strike': childAnn.strikethrough = true; break;
+    case 'u': childAnn.underline = true; break;
+    case 'br':
+      results.push({ type: 'text', text: { content: '\n' } });
+      return results;
+    case 'a':
+      childHref = node.getAttribute?.('href') ?? href;
+      break;
+    // Block-level tags appearing inside an inline context — just unwrap
+    case 'p': case 'div': case 'span': case 'sup': case 'sub': break;
+    // Skip media
+    case 'img': return results;
+  }
+
+  for (const child of (node.childNodes ?? [])) {
+    results.push(...extractRichText(child, childAnn, childHref));
+  }
+
+  return results;
+}
+
+function tableToNotionBlock(tableNode: any): BlockObjectRequest | null {
+  const trElements: any[] = tableNode.querySelectorAll('tr') ?? [];
+  if (trElements.length === 0) return null;
+
+  let tableWidth = 0;
+  for (const tr of trElements) {
+    tableWidth = Math.max(tableWidth, (tr.querySelectorAll('td, th') ?? []).length);
+  }
+  if (tableWidth === 0) return null;
+
+  const hasColumnHeader = (trElements[0]?.querySelectorAll('th') ?? []).length > 0;
+
+  const rowBlocks = trElements.map((tr: any) => {
+    const cellNodes: any[] = tr.querySelectorAll('td, th') ?? [];
+    const cells: RichTextItem[][] = Array.from({ length: tableWidth }, (_, i) => {
+      const cell = cellNodes[i];
+      return cell
+        ? extractRichText(cell)
+        : [{ type: 'text' as const, text: { content: '' } }];
+    });
+    return { object: 'block' as const, type: 'table_row' as const, table_row: { cells } };
+  });
+
+  return {
+    object: 'block',
+    type: 'table',
+    table: {
+      table_width: tableWidth,
+      has_column_header: hasColumnHeader,
+      has_row_header: false,
+      children: rowBlocks,
+    },
+  } as unknown as BlockObjectRequest;
+}
+
+/** Convert a single DOM node to Notion block(s). */
+function processNode(node: any): BlockObjectRequest[] {
+  // Text node at the top level
+  if (node.nodeType === 3) {
+    const text = decodeEntities(node.rawText ?? '').trim();
+    return text ? [paragraph(text)] : [];
+  }
+
+  if (node.nodeType !== 1) return [];
+
+  const tag: string = (node.tagName ?? '').toLowerCase();
+
+  switch (tag) {
+    case 'p': {
+      const rt = extractRichText(node);
+      if (rt.length === 0 || rt.every((r) => !r.text.content.trim())) return [];
+      return [{ object: 'block', type: 'paragraph', paragraph: { rich_text: rt } } as BlockObjectRequest];
+    }
+
+    case 'h1': case 'h2': {
+      const rt = extractRichText(node);
+      return [{ object: 'block', type: 'heading_2', heading_2: { rich_text: rt } } as BlockObjectRequest];
+    }
+
+    case 'h3': case 'h4': case 'h5': case 'h6': {
+      const rt = extractRichText(node);
+      return [{ object: 'block', type: 'heading_3', heading_3: { rich_text: rt } } as BlockObjectRequest];
+    }
+
+    case 'ul': {
+      const items: BlockObjectRequest[] = [];
+      for (const child of (node.childNodes ?? [])) {
+        if (child.nodeType === 1 && (child.tagName ?? '').toLowerCase() === 'li') {
+          const rt = extractRichText(child);
+          items.push({
+            object: 'block',
+            type: 'bulleted_list_item',
+            bulleted_list_item: { rich_text: rt },
+          } as BlockObjectRequest);
+        }
+      }
+      return items;
+    }
+
+    case 'ol': {
+      const items: BlockObjectRequest[] = [];
+      for (const child of (node.childNodes ?? [])) {
+        if (child.nodeType === 1 && (child.tagName ?? '').toLowerCase() === 'li') {
+          const rt = extractRichText(child);
+          items.push({
+            object: 'block',
+            type: 'numbered_list_item',
+            numbered_list_item: { rich_text: rt },
+          } as BlockObjectRequest);
+        }
+      }
+      return items;
+    }
+
+    case 'pre': {
+      const codeEl = node.querySelector('code');
+      const rawText: string = decodeEntities((codeEl ?? node).text ?? '').trimEnd();
+      if (!rawText) return [];
+      const langClass: string = codeEl?.getAttribute('class') ?? '';
+      const langMatch = langClass.match(/language-(\w+)/);
+      return codeBlocks(rawText, langMatch?.[1] ?? 'plain text');
+    }
+
+    case 'table': {
+      const block = tableToNotionBlock(node);
+      return block ? [block] : [];
+    }
+
+    case 'blockquote': {
+      const rt = extractRichText(node);
+      return [{ object: 'block', type: 'quote', quote: { rich_text: rt } } as BlockObjectRequest];
+    }
+
+    case 'hr':
+      return [{ object: 'block', type: 'divider', divider: {} } as BlockObjectRequest];
+
+    default: {
+      // div, section, article, span, etc. — recurse into children
+      const blocks: BlockObjectRequest[] = [];
+      for (const child of (node.childNodes ?? [])) {
+        blocks.push(...processNode(child));
+      }
+      return blocks;
+    }
+  }
+}
+
+/** Convert an HTML string to an array of Notion block objects. */
+function htmlToNotionBlocks(html: string): BlockObjectRequest[] {
+  if (!html?.trim()) return [paragraph('(no content)')];
+  const root = parse(html);
+  const blocks: BlockObjectRequest[] = [];
+  for (const child of root.childNodes) {
+    blocks.push(...processNode(child));
+  }
+  return blocks.length > 0 ? blocks : [paragraph('(no content)')];
+}
+
+// ── Push to Notion ────────────────────────────────────────────────────────────
+
 export async function pushToNotion(summary: ProblemSummary): Promise<string> {
   const token = getNotionToken();
   const databaseId = getNotionDatabaseId();
@@ -95,19 +327,23 @@ export async function pushToNotion(summary: ProblemSummary): Promise<string> {
 
   const blocks: BlockObjectRequest[] = [];
 
-  // Description section
+  // Description section — use structured HTML blocks when available
   blocks.push(heading1('Description'));
-  blocks.push(paragraph(summary.description || '(no description)'));
+  if (summary.contentHtml) {
+    blocks.push(...htmlToNotionBlocks(summary.contentHtml));
+  } else {
+    blocks.push(paragraph(summary.description || '(no description)'));
+  }
 
   // Use Cases section
-  blocks.push(heading1('Use Cases'));
-  if (summary.useCases.length > 0) {
-    for (const uc of summary.useCases) {
-      blocks.push(paragraph(uc));
-    }
-  } else {
-    blocks.push(paragraph('(no examples found)'));
-  }
+  // blocks.push(heading1('Use Cases'));
+  // if (summary.useCases.length > 0) {
+  //   for (const uc of summary.useCases) {
+  //     blocks.push(paragraph(uc));
+  //   }
+  // } else {
+  //   blocks.push(paragraph('(no examples found)'));
+  // }
 
   // Code section
   blocks.push(heading1('Code'));

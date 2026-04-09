@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import {
-  setCookie, setCsrfToken, setProxy, setNotionToken, setNotionDatabaseId,
-  getCookie, getCsrfToken, getProxy, getNotionToken, getNotionDatabaseId,
+  setCookie, setCsrfToken, setProxy, setNotionToken, setNotionDatabaseId, setObsidianVaultPath,
+  getCookie, getCsrfToken, getProxy, getNotionToken, getNotionDatabaseId, getObsidianVaultPath,
   getConfigPath, clearConfig,
 } from '../config';
 
@@ -16,9 +16,10 @@ export function registerAuthCommand(program: Command): void {
     .option('-p, --proxy <url>', 'HTTP/HTTPS proxy (e.g. http://127.0.0.1:7890)')
     .option('-n, --notion-token <token>', 'Notion integration token (secret_...)')
     .option('-d, --notion-db <id>', 'Notion database ID to insert pages into')
-    .action((opts: { cookie?: string; csrf?: string; proxy?: string; notionToken?: string; notionDb?: string }) => {
-      if (!opts.cookie && !opts.csrf && !opts.proxy && !opts.notionToken && !opts.notionDb) {
-        console.log('⚠️  No options provided. Usage: leetcode-cli auth set [-c cookie] [-t csrf] [-p proxy] [-n notion-token] [-d notion-db]');
+    .option('-o, --obsidian-vault <path>', 'Path to Obsidian vault directory')
+    .action((opts: { cookie?: string; csrf?: string; proxy?: string; notionToken?: string; notionDb?: string; obsidianVault?: string }) => {
+      if (!opts.cookie && !opts.csrf && !opts.proxy && !opts.notionToken && !opts.notionDb && !opts.obsidianVault) {
+        console.log('⚠️  No options provided. Usage: leetcode-cli auth set [-c cookie] [-t csrf] [-p proxy] [-n notion-token] [-d notion-db] [-o obsidian-vault]');
         return;
       }
       if (opts.cookie) setCookie(opts.cookie);
@@ -26,6 +27,7 @@ export function registerAuthCommand(program: Command): void {
       if (opts.proxy) setProxy(opts.proxy);
       if (opts.notionToken) setNotionToken(opts.notionToken);
       if (opts.notionDb) setNotionDatabaseId(opts.notionDb);
+      if (opts.obsidianVault) setObsidianVaultPath(opts.obsidianVault);
       console.log('✅ Config updated:', getConfigPath());
     });
 
@@ -47,6 +49,7 @@ export function registerAuthCommand(program: Command): void {
         aiProvider: 'GitHub Models (gpt-4o-mini) — uses `gh auth token` automatically',
         notionToken: notionToken ? notionToken.slice(0, 12) + '...' : '(not set)',
         notionDatabaseId: getNotionDatabaseId() || '(not set)',
+        obsidianVaultPath: getObsidianVaultPath() || '(not set)',
       }, null, 2));
     });
 

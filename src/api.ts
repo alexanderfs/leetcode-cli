@@ -52,10 +52,12 @@ export interface ProblemInfo {
   questionId: string;
   questionFrontendId: string;
   title: string;
+  translatedTitle: string;
   titleSlug: string;
   difficulty: string;
   topicTags: { name: string; slug: string }[];
   content: string;
+  translatedContent: string;
   acRate: number;
   isPaidOnly: boolean;
 }
@@ -67,12 +69,14 @@ export async function getProblemDetail(titleSlug: string): Promise<ProblemInfo> 
         questionId
         questionFrontendId
         title
+        translatedTitle
         titleSlug
         difficulty
         acRate
         isPaidOnly
         topicTags { name slug }
         content
+        translatedContent
       }
     }
   `;
@@ -310,11 +314,13 @@ export async function getProblemSummary(
     getProblemDetail(titleSlug),
     listSubmissions(titleSlug, 10),
   ]);
-  onProgress?.(`✅ Problem fetched: ${problem.title} (${problem.difficulty})`);
+  const displayTitle = problem.translatedTitle || problem.title;
+  onProgress?.(`✅ Problem fetched: ${displayTitle} (${problem.difficulty})`);
 
   const status = deriveStatus(submissions);
-  const description = stripHtml(problem.content ?? '');
-  const useCases = extractUseCases(problem.content ?? '');
+  const problemContent = problem.translatedContent || problem.content || '';
+  const description = stripHtml(problemContent);
+  const useCases = extractUseCases(problemContent);
 
   let code: string | null = null;
   let submissionInfo: ProblemSummary['submissionInfo'] = null;
@@ -344,19 +350,19 @@ export async function getProblemSummary(
 
     if (analysisFn && code) {
       onProgress?.('⏳ Analyzing code with AI...');
-      analysis = await analysisFn(problem.title, problem.difficulty, description, code, latestAccepted.lang);
+      analysis = await analysisFn(displayTitle, problem.difficulty, description, code, latestAccepted.lang);
       onProgress?.('✅ AI analysis complete');
     }
   }
 
   return {
-    problem: `${problem.questionFrontendId}. ${problem.title}`,
+    problem: `${problem.questionFrontendId}. ${displayTitle}`,
     link: problemUrl,
     difficulty: problem.difficulty,
     tags: problem.topicTags.map((t) => t.name),
     status,
     description,
-    contentHtml: problem.content ?? '',
+    contentHtml: problemContent,
     useCases,
     code,
     submissionInfo,

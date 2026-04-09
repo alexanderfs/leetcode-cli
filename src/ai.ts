@@ -4,7 +4,7 @@ import { HttpsProxyAgent } from 'https-proxy-agent';
 import { getProxy } from './config';
 
 const GITHUB_MODELS_URL = 'https://models.inference.ai.azure.com/chat/completions';
-const MODEL = 'gpt-4o-mini';
+const MODEL = 'gpt-4o';
 
 function getGitHubToken(): string {
   // Prefer env var, fall back to gh CLI
@@ -29,9 +29,11 @@ export async function analyzeCode(
 ): Promise<string> {
   const token = getGitHubToken();
 
-  const prompt = `You are a code review assistant for LeetCode problems. Analyze the following submission concisely in English.
+  const systemMessage = `You are an expert competitive programmer and code reviewer specializing in LeetCode problems. \
+Your goal is to give highly specific, actionable feedback that genuinely helps the developer write better, faster code. \
+Always reason carefully about the algorithm before commenting.`;
 
-## Problem
+  const userMessage = `## Problem
 Title: ${problemTitle}
 Difficulty: ${difficulty}
 Description:
@@ -42,14 +44,25 @@ ${description}
 ${code}
 \`\`\`
 
-Please provide a structured analysis with these sections:
-1. **Approach**: Brief description of the algorithm/approach used
-2. **Time Complexity**: Big-O time complexity with explanation
-3. **Space Complexity**: Big-O space complexity with explanation
-4. **Strengths**: What's done well
-5. **Improvements**: Specific suggestions to optimize or improve code quality
+Provide a structured analysis with these sections:
 
-Keep the total response under 300 words.`;
+1. **Approach**: Name the algorithm/pattern used (e.g. "two-pointer", "BFS", "dynamic programming"). One or two sentences.
+
+2. **Complexity**
+   - Time: Big-O with a brief justification
+   - Space: Big-O with a brief justification
+
+3. **Is this optimal?**
+   - If yes, confirm it and explain why no better complexity is achievable.
+   - If no, describe the optimal approach and its complexity. Show a concise code sketch in \`\`\`${lang}\`\`\` of the key difference only (not a full rewrite).
+
+4. **Concrete Improvements** (skip if already optimal): List at most 3 specific, ranked suggestions. For each one:
+   - State *what* to change and *why* it matters (performance, readability, or correctness).
+   - Show a short before/after code snippet in \`\`\`${lang}\`\`\` when the change is non-trivial.
+
+5. **Edge Cases**: List any edge cases the current code might miss or handle incorrectly.
+
+Be direct and technical. Avoid generic advice like "use meaningful variable names." Focus on algorithmic and structural improvements.`;
 
   const proxyUrl = getProxy();
   const axiosConfig: Record<string, unknown> = {
@@ -65,9 +78,12 @@ Keep the total response under 300 words.`;
 
   const body = {
     model: MODEL,
-    messages: [{ role: 'user', content: prompt }],
-    max_tokens: 1024,
-    temperature: 0.4,
+    messages: [
+      { role: 'system', content: systemMessage },
+      { role: 'user', content: userMessage },
+    ],
+    max_tokens: 1500,
+    temperature: 0.3,
   };
 
   const maxRetries = 3;

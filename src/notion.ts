@@ -2,6 +2,7 @@ import axios from 'axios';
 import type { BlockObjectRequest } from '@notionhq/client/build/src/api-endpoints';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { parse } from 'node-html-parser';
+import { marked } from 'marked';
 import { getNotionToken, getNotionDatabaseId, getProxy } from './config';
 import type { ProblemSummary } from './api';
 
@@ -200,6 +201,53 @@ function tableToNotionBlock(tableNode: any): BlockObjectRequest | null {
   } as unknown as BlockObjectRequest;
 }
 
+/**
+ * Convert a <li> node into one or more Notion blocks.
+ * If the item contains a nested <pre><code> block, it is emitted as a
+ * separate Notion code block (siblings, not children) so that the code is
+ * properly formatted rather than flattened into inline text.
+ */
+function listItemToBlocks(
+  li: any,
+  listType: 'bulleted_list_item' | 'numbered_list_item',
+): BlockObjectRequest[] {
+  const blocks: BlockObjectRequest[] = [];
+  const preNodes: any[] = [];
+  const inlineNodes: any[] = [];
+
+  for (const child of (li.childNodes ?? [])) {
+    const tag = (child.tagName ?? '').toLowerCase();
+    if (child.nodeType === 1 && tag === 'pre') {
+      preNodes.push(child);
+    } else {
+      inlineNodes.push(child);
+    }
+  }
+
+  // Build a virtual node containing only the inline children for rich-text extraction
+  const inlineRt: any[] = [];
+  for (const n of inlineNodes) {
+    inlineRt.push(...extractRichText(n));
+  }
+  const rt = inlineRt.filter((r) => r.text.content.trim() !== '');
+
+  if (rt.length > 0 || preNodes.length === 0) {
+    const richText = rt.length > 0 ? rt : [{ type: 'text' as const, text: { content: '' } }];
+    blocks.push({
+      object: 'block',
+      type: listType,
+      [listType]: { rich_text: richText },
+    } as BlockObjectRequest);
+  }
+
+  // Emit nested code blocks as siblings (Notion doesn't support block children in list items)
+  for (const pre of preNodes) {
+    blocks.push(...processNode(pre));
+  }
+
+  return blocks;
+}
+
 /** Convert a single DOM node to Notion block(s). */
 function processNode(node: any): BlockObjectRequest[] {
   // Text node at the top level
@@ -233,12 +281,7 @@ function processNode(node: any): BlockObjectRequest[] {
       const items: BlockObjectRequest[] = [];
       for (const child of (node.childNodes ?? [])) {
         if (child.nodeType === 1 && (child.tagName ?? '').toLowerCase() === 'li') {
-          const rt = extractRichText(child);
-          items.push({
-            object: 'block',
-            type: 'bulleted_list_item',
-            bulleted_list_item: { rich_text: rt },
-          } as BlockObjectRequest);
+          items.push(...listItemToBlocks(child, 'bulleted_list_item'));
         }
       }
       return items;
@@ -248,12 +291,7 @@ function processNode(node: any): BlockObjectRequest[] {
       const items: BlockObjectRequest[] = [];
       for (const child of (node.childNodes ?? [])) {
         if (child.nodeType === 1 && (child.tagName ?? '').toLowerCase() === 'li') {
-          const rt = extractRichText(child);
-          items.push({
-            object: 'block',
-            type: 'numbered_list_item',
-            numbered_list_item: { rich_text: rt },
-          } as BlockObjectRequest);
+          items.push(...listItemToBlocks(child, 'numbered_list_item'));
         }
       }
       return items;
@@ -261,11 +299,24 @@ function processNode(node: any): BlockObjectRequest[] {
 
     case 'pre': {
       const codeEl = node.querySelector('code');
-      const rawText: string = decodeEntities((codeEl ?? node).text ?? '').trimEnd();
-      if (!rawText) return [];
-      const langClass: string = codeEl?.getAttribute('class') ?? '';
-      const langMatch = langClass.match(/language-(\w+)/);
-      return codeBlocks(rawText, langMatch?.[1] ?? 'plain text');
+      if (codeEl) {
+        // Proper fenced code block with a <code> child
+        const rawText: string = decodeEntities(codeEl.text ?? '').trimEnd();
+        if (!rawText) return [];
+        const langClass: string = codeEl.getAttribute('class') ?? '';
+        const langMatch = langClass.match(/language-(\w+)/);
+        return codeBlocks(rawText, langMatch?.[1] ?? 'plain text');
+      }
+
+      // No <code> child — this is a LeetCode example/IO block.
+      // Render as a quote so bold labels like 输入：/输出：/解释： are preserved.
+      const rt = extractRichText(node).map((item) => ({
+        ...item,
+        // Strip any residual HTML-tag-like patterns that leaked in via decoded entities
+        text: { ...item.text, content: item.text.content.replace(/<\/?[a-zA-Z][^>]*>/g, '') },
+      })).filter((item) => item.text.content !== '');
+      if (rt.length === 0) return [];
+      return [{ object: 'block', type: 'quote', quote: { rich_text: rt } } as BlockObjectRequest];
     }
 
     case 'table': {
@@ -292,10 +343,19 @@ function processNode(node: any): BlockObjectRequest[] {
   }
 }
 
+/** Convert a markdown string to Notion blocks via HTML. */
+function markdownToNotionBlocks(md: string): BlockObjectRequest[] {
+  if (!md?.trim()) return [paragraph('(no content)')];
+  const html = marked(md, { async: false }) as string;
+  return htmlToNotionBlocks(html);
+}
+
 /** Convert an HTML string to an array of Notion block objects. */
 function htmlToNotionBlocks(html: string): BlockObjectRequest[] {
   if (!html?.trim()) return [paragraph('(no content)')];
-  const root = parse(html);
+  // Enable parsing of child elements inside <pre> so that
+  // <pre><code class="language-*"> is recognised as a code block.
+  const root = parse(html, { blockTextElements: { script: true, noscript: true, style: true } });
   const blocks: BlockObjectRequest[] = [];
   for (const child of root.childNodes) {
     blocks.push(...processNode(child));
@@ -355,7 +415,11 @@ export async function pushToNotion(summary: ProblemSummary): Promise<string> {
 
   // Analysis section
   blocks.push(heading1('Analysis'));
-  blocks.push(paragraph(summary.analysis || 'No analysis available.'));
+  if (summary.analysis) {
+    blocks.push(...markdownToNotionBlocks(summary.analysis));
+  } else {
+    blocks.push(paragraph('No analysis available.'));
+  }
 
   const payload = {
     parent: { database_id: databaseId },

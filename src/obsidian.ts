@@ -221,7 +221,7 @@ function yamlStr(value: string): string {
   if (/[:#\[\]{},>|&*!?%@`'"\\]/.test(value) || value.includes('\n')) {
     return `"${value.replace(/"/g, '\\"')}"`;
   }
-  return value;
+  return value.split(' ').join('');
 }
 
 // ── Write to Obsidian vault ───────────────────────────────────────────────────
@@ -248,17 +248,20 @@ export async function pushToObsidian(summary: ProblemSummary): Promise<string> {
 
   const filename = sanitizeFilename(summary.problem) + '.md';
   const filePath = path.join(folder, filename);
+  const baseTag = '[[!LeetCode.base]]';
 
   // Build YAML frontmatter
   const tagList = summary.tags.map((t) => `  - ${yamlStr(t)}`).join('\n');
   const info = summary.submissionInfo;
   const frontmatterLines = [
     '---',
+    `base: "${baseTag}"`,
     `problem: ${yamlStr(summary.problem)}`,
     `link: ${summary.link}`,
     `difficulty: ${summary.difficulty}`,
     `tags:\n${tagList || '  []'}`,
     `status: ${summary.status}`,
+    `familiarity: Normal`,
   ];
   if (info) {
     frontmatterLines.push(`lang: ${info.lang}`);
